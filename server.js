@@ -905,5 +905,10 @@ function sendWS(uid, data) { const ws = clients.get(uid); if (ws?.readyState ===
 
 // ==================== START ====================
 initDB().then(() => {
-  server.listen(PORT, () => console.log('Elite Access Server v6.2-pg on port ' + PORT));
+  server.listen(PORT, () => {
+    console.log('Elite Access Server v6.2-pg on port ' + PORT);
+    // Self-ping every 10 min to prevent Render free tier from sleeping
+    const RENDER_URL = process.env.RENDER_EXTERNAL_URL || ('http://localhost:' + PORT);
+    setInterval(() => { fetch(RENDER_URL).catch(() => {}); }, 600000);
+  });
 }).catch(e => { console.error('DB init failed:', e); process.exit(1); });

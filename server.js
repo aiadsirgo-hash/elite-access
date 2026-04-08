@@ -14,8 +14,14 @@ const PORT = process.env.PORT || 3000;
 // PostgreSQL connection (use DATABASE_URL from Neon.tech)
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false }
+  ssl: { rejectUnauthorized: false },
+  max: 5,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 10000
 });
+
+// Keep DB alive — ping every 4 min to prevent Neon free tier from sleeping
+setInterval(() => { pool.query('SELECT 1').catch(e => console.error('DB keepalive failed:', e.message)); }, 240000);
 
 // IMPORTANT: All timestamps use JS Date().toISOString() = UTC with Z suffix
 function utcNow() { return new Date().toISOString(); }
@@ -824,7 +830,6 @@ app.get('/api/support/my-messages', authMW, async (req, res) => {
 app.get('/api/support/conversations', authMW, async (req, res) => {
   try {
     if (req.user.role !== 'owner') return res.status(403).json({ error: 'Owner only' });
-    // Get distinct users who have sent messages, with latest message and unread count
     const convos = await dbAll(`
       SELECT sm.from_username as username, sm.from_user_id as user_id,
         MAX(sm.created_at) as last_message_at,
@@ -844,7 +849,6 @@ app.get('/api/support/conversation/:username', authMW, async (req, res) => {
     if (req.user.role !== 'owner') return res.status(403).json({ error: 'Owner only' });
     const u = await dbGet('SELECT * FROM users WHERE LOWER(username) = LOWER($1)', [req.params.username]);
     if (!u) return res.status(404).json({ error: 'User not found' });
-    // Mark all messages from this user as read
     await dbRun('UPDATE support_messages SET read = 1 WHERE from_user_id = $1 AND is_owner_reply = 0', [u.id]);
     const msgs = await dbAll('SELECT id, from_username, message, is_owner_reply, read, created_at FROM support_messages WHERE from_user_id = $1 OR to_user_id = $1 ORDER BY created_at ASC LIMIT 200', [u.id]);
     res.json({ messages: msgs, username: u.username, online: clients.has(u.id) });
@@ -862,7 +866,6 @@ app.post('/api/support/reply', authMW, async (req, res) => {
     const id = uuidv4();
     const now = utcNow();
     await dbRun('INSERT INTO support_messages (id, from_user_id, from_username, to_user_id, message, is_owner_reply, read, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)', [id, req.user.id, req.user.username, u.id, message.trim(), 1, 0, now]);
-    // Notify receiver via WS
     sendWS(u.id, { type: 'support-reply', message: message.trim(), id, createdAt: now });
     res.json({ ok: true });
   } catch(e) { res.status(500).json({ error: 'Server error' }); }
@@ -907,8 +910,10 @@ function sendWS(uid, data) { const ws = clients.get(uid); if (ws?.readyState ===
 initDB().then(() => {
   server.listen(PORT, () => {
     console.log('Elite Access Server v6.2-pg on port ' + PORT);
-    // Self-ping every 10 min to prevent Render free tier from sleeping
+    // Self-ping every 5 min to prevent Render free tier from sleeping
     const RENDER_URL = process.env.RENDER_EXTERNAL_URL || ('http://localhost:' + PORT);
-    setInterval(() => { fetch(RENDER_URL).catch(() => {}); }, 600000);
+    setInterval(() => {
+      fetch(RENDER_URL).then(() => console.log('Keep-alive ping OK')).catch(() => console.log('Keep-alive ping failed'));
+    }, 300000);
   });
 }).catch(e => { console.error('DB init failed:', e); process.exit(1); });

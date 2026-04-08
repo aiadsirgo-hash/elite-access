@@ -20,9 +20,6 @@ const pool = new Pool({
   connectionTimeoutMillis: 10000
 });
 
-// Keep DB alive — ping every 4 min to prevent Neon free tier from sleeping
-setInterval(() => { pool.query('SELECT 1').catch(e => console.error('DB keepalive failed:', e.message)); }, 240000);
-
 // IMPORTANT: All timestamps use JS Date().toISOString() = UTC with Z suffix
 function utcNow() { return new Date().toISOString(); }
 
@@ -910,6 +907,10 @@ function sendWS(uid, data) { const ws = clients.get(uid); if (ws?.readyState ===
 initDB().then(() => {
   server.listen(PORT, () => {
     console.log('Elite Access Server v6.2-pg on port ' + PORT);
+
+    // Keep DB alive — ping every 4 min to prevent Neon free tier from sleeping
+    setInterval(() => { pool.query('SELECT 1').catch(e => console.error('DB keepalive failed:', e.message)); }, 240000);
+
     // Self-ping every 5 min to prevent Render free tier from sleeping
     const RENDER_URL = process.env.RENDER_EXTERNAL_URL || ('http://localhost:' + PORT);
     setInterval(() => {
